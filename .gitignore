@@ -1,1 +1,48 @@
 script/.env
+
+# 機密情報を含むファイル
+.social-engagement-config
+*.config
+config.local
+
+# APIキーや認証情報
+*_token
+*_key
+*_secret
+
+# ローカル設定ファイル
+local.config
+local.env
+development.config
+
+# バックアップファイル
+*.bak
+*.backup
+*~
+
+# ログファイル
+*.log
+logs/
+*.errors
+
+# 一時ファイル
+tmp/
+temp/
+*.tmp
+
+# エディタファイル
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS固有ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# テスト用ファイル
+test_*.sh
+debug_*.sh
+mock_*.json

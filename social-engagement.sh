@@ -259,6 +259,14 @@ load_config() {
         missing_configs+=("QIITA_ACCESS_TOKEN")
     fi
     
+    if [[ -z "${X_USERNAME:-}" ]]; then
+        missing_configs+=("X_USERNAME")
+    fi
+    
+    if [[ -z "${QIITA_USER_ID:-}" ]]; then
+        missing_configs+=("QIITA_USER_ID")
+    fi
+    
     if [[ -z "${NOTION_TOKEN:-}" ]]; then
         missing_configs+=("NOTION_TOKEN")
     fi
@@ -339,6 +347,9 @@ setup_config() {
     echo
     read_secure_input "X API Bearer Token" "X_BEARER_TOKEN_INPUT" "true"
     
+    echo
+    read_secure_input "X ユーザー名" "X_USERNAME_INPUT" "false"
+    
     # Qiita API設定
     echo
     echo -e "${YELLOW}=== Qiita API設定 ===${NC}"
@@ -347,6 +358,9 @@ setup_config() {
     echo "2. 'read_qiita' スコープを選択"
     echo
     read_secure_input "Qiita Personal Access Token" "QIITA_ACCESS_TOKEN_INPUT" "true"
+    
+    echo
+    read_secure_input "Qiita ユーザーID" "QIITA_USER_ID_INPUT" "false"
     
     # Notion API設定
     echo
@@ -383,9 +397,11 @@ setup_config() {
 
 # X (Twitter) API設定
 X_BEARER_TOKEN="${X_BEARER_TOKEN_INPUT:-}"
+X_USERNAME="${X_USERNAME_INPUT:-}"
 
 # Qiita API設定
 QIITA_ACCESS_TOKEN="${QIITA_ACCESS_TOKEN_INPUT:-}"
+QIITA_USER_ID="${QIITA_USER_ID_INPUT:-}"
 
 # Notion API設定
 NOTION_TOKEN="${NOTION_TOKEN_INPUT:-}"
@@ -720,7 +736,7 @@ fetch_platform_background() {
     case "$platform" in
         "$PLATFORM_X")
             if [[ -n "${X_BEARER_TOKEN:-}" ]]; then
-                local x_username="your_x_username"  # 実際は設定から取得
+                local x_username="${X_USERNAME:-}"
                 if fetch_x_data "$x_username" "$X_BEARER_TOKEN" 2>/dev/null; then
                     echo "SUCCESS:$platform" > "$output_file"
                 else
@@ -732,7 +748,7 @@ fetch_platform_background() {
             ;;
         "$PLATFORM_QIITA")
             if [[ -n "${QIITA_ACCESS_TOKEN:-}" ]]; then
-                local qiita_user_id="your_qiita_id"  # 実際は設定から取得
+                local qiita_user_id="${QIITA_USER_ID:-}"
                 if fetch_qiita_data "$qiita_user_id" "$QIITA_ACCESS_TOKEN" 2>/dev/null; then
                     echo "SUCCESS:$platform" > "$output_file"
                 else
@@ -828,8 +844,12 @@ fetch_all_data() {
     
     # X APIからデータを取得
     if [[ -n "${X_BEARER_TOKEN:-}" ]]; then
-        # X用のユーザー名を取得（設定から推測または手動設定が必要）
-        local x_username="your_x_username"  # 実際は設定から取得
+        # X用のユーザー名を設定から取得
+        local x_username="${X_USERNAME:-}"
+        if [[ -z "$x_username" ]]; then
+            log_error "X API: ユーザー名が設定されていません (X_USERNAME)"
+            return 1
+        fi
         fetch_x_data "$x_username" "$X_BEARER_TOKEN" || log_warning "X APIからのデータ取得に失敗しました"
     else
         log_info "X API設定がスキップされました"
@@ -837,8 +857,12 @@ fetch_all_data() {
     
     # Qiita APIからデータを取得
     if [[ -n "${QIITA_ACCESS_TOKEN:-}" ]]; then
-        # Qiita用のユーザーIDを取得（設定から推測または手動設定が必要）
-        local qiita_user_id="your_qiita_id"  # 実際は設定から取得
+        # Qiita用のユーザーIDを設定から取得
+        local qiita_user_id="${QIITA_USER_ID:-}"
+        if [[ -z "$qiita_user_id" ]]; then
+            log_error "Qiita API: ユーザーIDが設定されていません (QIITA_USER_ID)"
+            return 1
+        fi
         fetch_qiita_data "$qiita_user_id" "$QIITA_ACCESS_TOKEN" || log_warning "Qiita APIからのデータ取得に失敗しました"
     else
         log_info "Qiita API設定がスキップされました"

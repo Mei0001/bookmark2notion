@@ -1,0 +1,46 @@
+# Social Engagement Integration System 設定テンプレート
+# このファイルをコピーして ~/.social-engagement-config として使用してください
+
+# X (Twitter) API設定
+# 取得方法: https://developer.twitter.com でアプリを作成し、Bearer Tokenを取得
+# 注意: X API v2 Bearer Token（app-only認証）を使用
+X_BEARER_TOKEN=""
+
+# Qiita API設定
+# 取得方法: https://qiita.com/settings/applications でPersonal Access Tokenを作成
+# 必要スコープ: read_qiita
+QIITA_ACCESS_TOKEN=""
+
+# Notion API設定
+# 取得方法: https://www.notion.so/my-integrations でIntegrationを作成
+# 形式: ntn_で始まるトークン
+NOTION_TOKEN=""
+
+# Notion データベースID
+# 取得方法: NotionデータベースのURLから取得
+# 形式: https://www.notion.so/[データベースID]
+NOTION_DATABASE_ID=""
+
+# note設定
+# あなたのnoteプロフィールURL: https://note.com/[ユーザー名]
+# 例: note.com/your_username の場合は "your_username"
+NOTE_USERNAME=""
+
+# Zenn設定
+# あなたのZennプロフィールURL: https://zenn.dev/[ユーザー名]
+# 例: zenn.dev/your_username の場合は "your_username"
+ZENN_USERNAME=""
+
+# X (Twitter) ユーザー名
+# あなたのX（Twitter）ユーザー名（@マークなし）
+X_USERNAME=""
+
+# Qiita ユーザーID
+# あなたのQiitaユーザーID
+QIITA_USER_ID=""
+
+# 設定ファイルのバージョン
+CONFIG_VERSION="1.0.0"
+
+# 設定作成日時（自動で設定されます）
+# CREATED_AT="$(date '+%Y-%m-%d %H:%M:%S')"

@@ -6,43 +6,89 @@
 
 このシステムは、コンテンツクリエイターが複数のプラットフォームでのエンゲージメント指標を一箇所で確認できるよう設計されています。単一のbashスクリプトを実行するだけで、すべてのプラットフォームからのエンゲージメント情報を統合して表示し、Notionデータベースに自動保存します。
 
+## セットアップ手順
+
+### 1. 設定ファイルの準備
+
+```bash
+# 設定テンプレートをコピー
+cp config.template ~/.social-engagement-config
+
+# 設定ファイルの権限を設定
+chmod 600 ~/.social-engagement-config
+```
+
+### 2. API設定の取得
+
+各プラットフォームのAPIキーを取得し、設定ファイルに記入してください：
+
+#### X (Twitter) API
+1. [X Developer Portal](https://developer.twitter.com/) でアプリケーションを作成
+2. 「Keys and Tokens」タブでBearer Tokenを取得
+3. 設定ファイルの `X_BEARER_TOKEN` に記入
+4. あなたのXユーザー名を `X_USERNAME` に記入
+
+#### Qiita API
+1. [Qiita設定画面](https://qiita.com/settings/applications) でPersonal Access Tokenを作成
+2. スコープで「read_qiita」を選択
+3. 設定ファイルの `QIITA_ACCESS_TOKEN` に記入
+4. あなたのQiitaユーザーIDを `QIITA_USER_ID` に記入
+
+#### note設定
+1. あなたのnoteプロフィールURL（`https://note.com/[ユーザー名]`）を確認
+2. ユーザー名部分を `NOTE_USERNAME` に記入
+
+#### Zenn設定
+1. あなたのZennプロフィールURL（`https://zenn.dev/[ユーザー名]`）を確認
+2. ユーザー名部分を `ZENN_USERNAME` に記入
+
+#### Notion API
+1. [Notion Integrations](https://www.notion.so/my-integrations) でIntegrationを作成
+2. Integration Tokenを `NOTION_TOKEN` に記入
+3. Notionでデータベースを作成し、以下のプロパティを設定：
+   - タイトル（Title）
+   - プラットフォーム（Select）
+   - URL（URL）
+   - エンゲージメント数（Number）
+   - エンゲージメント種別（Select）
+   - 公開日（Date）
+   - 最終更新（Date）
+4. データベースIDを `NOTION_DATABASE_ID` に記入
+5. 作成したIntegrationをデータベースに招待
+
+### 3. 設定ファイルの例
+
+```bash
+# ~/.social-engagement-config の例
+X_BEARER_TOKEN="your_bearer_token_here"
+X_USERNAME="your_twitter_username"
+QIITA_ACCESS_TOKEN="your_qiita_token_here"
+QIITA_USER_ID="your_qiita_user_id"
+NOTION_TOKEN="ntn_your_notion_token_here"
+NOTION_DATABASE_ID="your_database_id_here"
+NOTE_USERNAME="your_note_username"
+ZENN_USERNAME="your_zenn_username"
+```
+
 ## 使用方法
 
-### 基本的な使用方法
+1. スクリプトを実行
+```bash
+./social-engagement.sh
+```
 
-1. **初回実行とセットアップ**
-   ```bash
-   ./social-engagement.sh
-   ```
-   初回実行時には、各プラットフォームのAPI認証情報の設定が求められます。
+2. 各プラットフォームからのデータを自動取得
+3. コンソールに統合結果を表示
+4. Notionデータベースに自動保存
 
-2. **デバッグモードでの実行**
-   ```bash
-   ./social-engagement.sh --debug
-   ```
-   詳細なデバッグ情報とテスト結果を表示します。
+### オプション
 
-3. **設定の確認**
-   ```bash
-   ./social-engagement.sh --config
-   ```
-   設定ファイルの場所と状態を確認できます。
-
-4. **設定のリセット**
-   ```bash
-   ./social-engagement.sh --reset-config
-   ```
-   設定をリセットして再設定を行います。
-
-### 必要な認証情報
-
-初回実行時に以下の認証情報の設定が必要です：
-
-- **X (Twitter) API**: Bearer Token
-- **Qiita API**: Personal Access Token
-- **Notion API**: Integration Token とDatabase ID
-- **note**: ユーザー名
-- **Zenn**: ユーザー名
+```bash
+./social-engagement.sh --help      # ヘルプを表示
+./social-engagement.sh --debug     # デバッグモードで実行
+./social-engagement.sh --verbose   # 詳細ログで実行
+./social-engagement.sh --config    # 設定ファイルの場所を確認
+```
 
 ### 実行結果
 
