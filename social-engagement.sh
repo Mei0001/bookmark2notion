@@ -710,9 +710,118 @@ fetch_zenn_data() {
     return 0
 }
 
-# 全プラットフォームからデータを取得
+# 並行処理とパフォーマンス最適化
+
+# バックグラウンドでAPIを呼び出し
+fetch_platform_background() {
+    local platform="$1"
+    local output_file="$2"
+    
+    case "$platform" in
+        "$PLATFORM_X")
+            if [[ -n "${X_BEARER_TOKEN:-}" ]]; then
+                local x_username="your_x_username"  # 実際は設定から取得
+                if fetch_x_data "$x_username" "$X_BEARER_TOKEN" 2>/dev/null; then
+                    echo "SUCCESS:$platform" > "$output_file"
+                else
+                    echo "FAILED:$platform" > "$output_file"
+                fi
+            else
+                echo "SKIPPED:$platform" > "$output_file"
+            fi
+            ;;
+        "$PLATFORM_QIITA")
+            if [[ -n "${QIITA_ACCESS_TOKEN:-}" ]]; then
+                local qiita_user_id="your_qiita_id"  # 実際は設定から取得
+                if fetch_qiita_data "$qiita_user_id" "$QIITA_ACCESS_TOKEN" 2>/dev/null; then
+                    echo "SUCCESS:$platform" > "$output_file"
+                else
+                    echo "FAILED:$platform" > "$output_file"
+                fi
+            else
+                echo "SKIPPED:$platform" > "$output_file"
+            fi
+            ;;
+        "$PLATFORM_NOTE")
+            if [[ -n "${NOTE_USERNAME:-}" ]]; then
+                if fetch_note_data "$NOTE_USERNAME" 2>/dev/null; then
+                    echo "SUCCESS:$platform" > "$output_file"
+                else
+                    echo "FAILED:$platform" > "$output_file"
+                fi
+            else
+                echo "SKIPPED:$platform" > "$output_file"
+            fi
+            ;;
+        "$PLATFORM_ZENN")
+            if [[ -n "${ZENN_USERNAME:-}" ]]; then
+                if fetch_zenn_data "$ZENN_USERNAME" 2>/dev/null; then
+                    echo "SUCCESS:$platform" > "$output_file"
+                else
+                    echo "FAILED:$platform" > "$output_file"
+                fi
+            else
+                echo "SKIPPED:$platform" > "$output_file"
+            fi
+            ;;
+    esac
+}
+
+# 並行処理でデータを取得
+fetch_all_data_parallel() {
+    log_info "並行処理で全プラットフォームからデータを取得開始..."
+    
+    # 記事データを初期化
+    ARTICLE_DATA=()
+    
+    # 一時ファイルを作成
+    local temp_dir=$(mktemp -d)
+    local pids=()
+    
+    # 各プラットフォームをバックグラウンドで実行
+    for platform in "$PLATFORM_X" "$PLATFORM_QIITA" "$PLATFORM_NOTE" "$PLATFORM_ZENN"; do
+        local output_file="$temp_dir/${platform}.status"
+        fetch_platform_background "$platform" "$output_file" &
+        pids+=($!)
+        log_debug "バックグラウンドでの処理を開始: $platform (PID: $!)"
+    done
+    
+    # 全てのバックグラウンドプロセスの完了を待機
+    log_info "全プラットフォームの処理完了を待機中..."
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+        log_debug "プロセス完了: PID $pid"
+    done
+    
+    # 結果の確認
+    for platform in "$PLATFORM_X" "$PLATFORM_QIITA" "$PLATFORM_NOTE" "$PLATFORM_ZENN"; do
+        local output_file="$temp_dir/${platform}.status"
+        if [[ -f "$output_file" ]]; then
+            local status=$(cat "$output_file")
+            case "$status" in
+                "SUCCESS:$platform")
+                    log_success "$platform APIからのデータ取得が完了しました"
+                    ;;
+                "FAILED:$platform")
+                    log_warning "$platform APIからのデータ取得に失敗しました"
+                    ;;
+                "SKIPPED:$platform")
+                    log_info "$platform API設定がスキップされました"
+                    ;;
+            esac
+        fi
+    done
+    
+    # 一時ファイルを削除
+    rm -rf "$temp_dir"
+    
+    log_success "並行処理によるデータ取得が完了しました"
+    log_info "取得した記事数: ${#ARTICLE_DATA[@]}"
+}
+
+# 従来の順次処理でデータを取得
 fetch_all_data() {
-    log_info "全プラットフォームからデータを取得開始..."
+    log_info "順次処理で全プラットフォームからデータを取得開始..."
     
     # 記事データを初期化
     ARTICLE_DATA=()
@@ -749,7 +858,7 @@ fetch_all_data() {
         log_info "Zenn API設定がスキップされました"
     fi
     
-    log_success "全プラットフォームからのデータ取得が完了しました"
+    log_success "順次処理によるデータ取得が完了しました"
     log_info "取得した記事数: ${#ARTICLE_DATA[@]}"
 }
 
@@ -996,17 +1105,558 @@ display_results() {
     log_success "結果の表示が完了しました"
 }
 
+# Notion API連携関数
+
+# Notion APIを使用してデータベースにページを作成
+save_to_notion() {
+    local article_data="$1"
+    
+    if [[ -z "${NOTION_TOKEN:-}" ]]; then
+        log_error "Notion API: トークンが設定されていません"
+        return 1
+    fi
+    
+    if [[ -z "${NOTION_DATABASE_ID:-}" ]]; then
+        log_error "Notion API: データベースIDが設定されていません"
+        return 1
+    fi
+    
+    # 記事データを解析
+    local platform=$(echo "$article_data" | grep -o 'platform:[^|]*' | cut -d':' -f2)
+    local title=$(echo "$article_data" | grep -o 'title:[^|]*' | cut -d':' -f2)
+    local url=$(echo "$article_data" | grep -o 'url:[^|]*' | cut -d':' -f2)
+    local engagement_count=$(echo "$article_data" | grep -o 'engagement_count:[0-9]*' | cut -d':' -f2)
+    local engagement_type=$(echo "$article_data" | grep -o 'engagement_type:[^|]*' | cut -d':' -f2)
+    local date=$(echo "$article_data" | grep -o 'date:[^|]*' | cut -d':' -f2)
+    
+    # Notion APIトークンをデコード
+    local decoded_token=$(decode_base64 "$NOTION_TOKEN")
+    
+    # 現在の日時を取得
+    local current_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    # Notion APIリクエストのJSONを作成
+    local notion_json=$(cat <<EOF
+{
+    "parent": {
+        "type": "database_id",
+        "database_id": "$NOTION_DATABASE_ID"
+    },
+    "properties": {
+        "タイトル": {
+            "title": [
+                {
+                    "text": {
+                        "content": "$title"
+                    }
+                }
+            ]
+        },
+        "プラットフォーム": {
+            "select": {
+                "name": "$platform"
+            }
+        },
+        "URL": {
+            "url": "$url"
+        },
+        "エンゲージメント数": {
+            "number": $engagement_count
+        },
+        "エンゲージメント種別": {
+            "select": {
+                "name": "$engagement_type"
+            }
+        },
+        "公開日": {
+            "date": {
+                "start": "$date"
+            }
+        },
+        "最終更新": {
+            "date": {
+                "start": "$current_date"
+            }
+        }
+    }
+}
+EOF
+)
+    
+    # Notion APIを呼び出し
+    local notion_response
+    notion_response=$(curl -s --connect-timeout 10 --max-time 30 \
+        -X POST \
+        -H "Authorization: Bearer $decoded_token" \
+        -H "Content-Type: application/json" \
+        -H "Notion-Version: 2022-06-28" \
+        -d "$notion_json" \
+        "https://api.notion.com/v1/pages" \
+        2>/dev/null)
+    
+    if [[ $? -ne 0 ]]; then
+        log_error "Notion API: ページ作成リクエストが失敗しました"
+        return 1
+    fi
+    
+    # レスポンスを確認
+    local page_id=$(echo "$notion_response" | jq -r '.id // empty')
+    if [[ -n "$page_id" ]]; then
+        log_debug "Notion API: ページ作成成功 - ID: $page_id"
+        return 0
+    else
+        local error_message=$(echo "$notion_response" | jq -r '.message // "不明なエラー"')
+        log_error "Notion API: ページ作成失敗 - $error_message"
+        return 1
+    fi
+}
+
+# 既存記事の重複チェック
+check_notion_duplicate() {
+    local url="$1"
+    
+    if [[ -z "${NOTION_TOKEN:-}" ]]; then
+        return 1
+    fi
+    
+    if [[ -z "${NOTION_DATABASE_ID:-}" ]]; then
+        return 1
+    fi
+    
+    local decoded_token=$(decode_base64 "$NOTION_TOKEN")
+    
+    # データベースをクエリして重複チェック
+    local query_json=$(cat <<EOF
+{
+    "filter": {
+        "property": "URL",
+        "url": {
+            "equals": "$url"
+        }
+    }
+}
+EOF
+)
+    
+    local query_response
+    query_response=$(curl -s --connect-timeout 10 --max-time 30 \
+        -X POST \
+        -H "Authorization: Bearer $decoded_token" \
+        -H "Content-Type: application/json" \
+        -H "Notion-Version: 2022-06-28" \
+        -d "$query_json" \
+        "https://api.notion.com/v1/databases/$NOTION_DATABASE_ID/query" \
+        2>/dev/null)
+    
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    
+    local result_count=$(echo "$query_response" | jq '.results | length // 0')
+    if [[ "$result_count" -gt 0 ]]; then
+        echo "duplicate"
+    else
+        echo "new"
+    fi
+}
+
+# 全記事をNotionに保存
+save_all_to_notion() {
+    if [[ -z "${NOTION_TOKEN:-}" ]]; then
+        log_info "Notion API設定がスキップされました"
+        return 0
+    fi
+    
+    log_info "Notionデータベースにデータを保存中..."
+    
+    local saved_count=0
+    local duplicate_count=0
+    local error_count=0
+    
+    for article in "${ARTICLE_DATA[@]}"; do
+        local url=$(echo "$article" | grep -o 'url:[^|]*' | cut -d':' -f2)
+        local title=$(echo "$article" | grep -o 'title:[^|]*' | cut -d':' -f2)
+        
+        # 重複チェック
+        local duplicate_status=$(check_notion_duplicate "$url")
+        if [[ "$duplicate_status" == "duplicate" ]]; then
+            log_debug "Notion API: 重複記事をスキップ - $title"
+            duplicate_count=$((duplicate_count + 1))
+            continue
+        fi
+        
+        # 記事をNotionに保存
+        if save_to_notion "$article"; then
+            log_debug "Notion API: 記事保存成功 - $title"
+            saved_count=$((saved_count + 1))
+        else
+            log_warning "Notion API: 記事保存失敗 - $title"
+            error_count=$((error_count + 1))
+        fi
+        
+        # レート制限対応
+        sleep 0.5
+    done
+    
+    log_success "Notionデータベースへの保存が完了しました"
+    log_info "新規保存: $saved_count 件, 重複スキップ: $duplicate_count 件, エラー: $error_count 件"
+}
+
+# エラーハンドリングとリトライ機能
+
+# 指数バックオフによるリトライ
+retry_with_backoff() {
+    local command="$1"
+    local max_attempts="${2:-3}"
+    local base_delay="${3:-1}"
+    local max_delay="${4:-60}"
+    
+    local attempt=1
+    local delay=$base_delay
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        log_debug "リトライ実行中: 試行 $attempt/$max_attempts"
+        
+        # コマンドを実行
+        if eval "$command"; then
+            log_debug "リトライ成功: 試行 $attempt/$max_attempts"
+            return 0
+        fi
+        
+        # 最後の試行でない場合は待機
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warning "リトライ失敗: 試行 $attempt/$max_attempts, ${delay}秒後にリトライ"
+            sleep "$delay"
+            
+            # 指数バックオフ
+            delay=$((delay * 2))
+            if [[ $delay -gt $max_delay ]]; then
+                delay=$max_delay
+            fi
+        else
+            log_error "リトライ失敗: 全ての試行が失敗しました ($max_attempts/$max_attempts)"
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    return 1
+}
+
+# ネットワークエラーに対する堅牢なHTTPリクエスト
+robust_http_request() {
+    local method="$1"
+    local url="$2"
+    local headers="$3"
+    local data="$4"
+    local max_attempts="${5:-3}"
+    
+    local curl_cmd="curl -s --connect-timeout 10 --max-time 30"
+    
+    # HTTPメソッドを追加
+    if [[ "$method" != "GET" ]]; then
+        curl_cmd="$curl_cmd -X $method"
+    fi
+    
+    # ヘッダーを追加
+    if [[ -n "$headers" ]]; then
+        curl_cmd="$curl_cmd $headers"
+    fi
+    
+    # データを追加
+    if [[ -n "$data" ]]; then
+        curl_cmd="$curl_cmd -d '$data'"
+    fi
+    
+    # URLを追加
+    curl_cmd="$curl_cmd '$url'"
+    
+    # リトライ実行
+    retry_with_backoff "$curl_cmd" "$max_attempts"
+}
+
+# API呼び出しの堅牢化
+robust_api_call() {
+    local api_name="$1"
+    local api_function="$2"
+    shift 2
+    local args=("$@")
+    
+    log_info "$api_name APIを呼び出し中..."
+    
+    # リトライ機能付きでAPI関数を実行
+    if retry_with_backoff "$api_function ${args[*]}" 3 2 10; then
+        log_success "$api_name APIの呼び出しが成功しました"
+        return 0
+    else
+        log_error "$api_name APIの呼び出しが失敗しました"
+        return 1
+    fi
+}
+
+# 部分的なデータでの継続処理
+handle_partial_data() {
+    local total_platforms=4
+    local successful_platforms=0
+    
+    # 成功したプラットフォーム数を数える
+    for platform in "$PLATFORM_X" "$PLATFORM_NOTE" "$PLATFORM_QIITA" "$PLATFORM_ZENN"; do
+        local platform_articles=0
+        for article in "${ARTICLE_DATA[@]}"; do
+            local article_platform=$(echo "$article" | grep -o 'platform:[^|]*' | cut -d':' -f2)
+            if [[ "$article_platform" == "$platform" ]]; then
+                platform_articles=$((platform_articles + 1))
+                break
+            fi
+        done
+        
+        if [[ $platform_articles -gt 0 ]]; then
+            successful_platforms=$((successful_platforms + 1))
+        fi
+    done
+    
+    log_info "データ取得状況: $successful_platforms/$total_platforms プラットフォーム"
+    
+    if [[ $successful_platforms -eq 0 ]]; then
+        log_error "すべてのプラットフォームからのデータ取得に失敗しました"
+        return 1
+    elif [[ $successful_platforms -lt $total_platforms ]]; then
+        log_warning "一部のプラットフォームからのデータ取得に失敗しましたが、処理を続行します"
+        return 0
+    else
+        log_success "すべてのプラットフォームからのデータ取得に成功しました"
+        return 0
+    fi
+}
+
+# 致命的エラーの処理
+handle_fatal_error() {
+    local error_message="$1"
+    local exit_code="${2:-1}"
+    
+    log_error "致命的エラーが発生しました: $error_message"
+    log_error "詳細はエラーログを確認してください: $ERROR_LOG"
+    
+    # エラーログに詳細を記録
+    echo "=== 致命的エラー詳細 ===" >> "$ERROR_LOG"
+    echo "発生時刻: $(date)" >> "$ERROR_LOG"
+    echo "エラー内容: $error_message" >> "$ERROR_LOG"
+    echo "終了コード: $exit_code" >> "$ERROR_LOG"
+    echo "===================" >> "$ERROR_LOG"
+    
+    # 終了前のクリーンアップ
+    cleanup_on_exit
+    
+    exit "$exit_code"
+}
+
+# 終了時のクリーンアップ処理
+cleanup_on_exit() {
+    log_info "クリーンアップ処理を実行中..."
+    
+    # 一時ファイルの削除
+    if [[ -n "${TEMP_DIR:-}" && -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+        log_debug "一時ディレクトリを削除しました: $TEMP_DIR"
+    fi
+    
+    # バックグラウンドプロセスの終了
+    local running_jobs=$(jobs -r | wc -l)
+    if [[ $running_jobs -gt 0 ]]; then
+        log_debug "バックグラウンドプロセスを終了中..."
+        kill $(jobs -p) 2>/dev/null || true
+        wait 2>/dev/null || true
+    fi
+    
+    log_debug "クリーンアップ処理が完了しました"
+}
+
+# シグナルハンドラーの設定
+setup_signal_handlers() {
+    trap 'handle_fatal_error "スクリプトが中断されました (SIGINT)" 130' INT
+    trap 'handle_fatal_error "スクリプトが終了されました (SIGTERM)" 143' TERM
+    trap 'cleanup_on_exit' EXIT
+}
+
+# 統合テストとデバッグ機能
+
+# デバッグ情報の表示
+show_debug_info() {
+    if [[ "$DEBUG_MODE" != "true" ]]; then
+        return 0
+    fi
+    
+    echo
+    echo -e "${PURPLE}=== デバッグ情報 ===${NC}"
+    echo "スクリプトバージョン: $SCRIPT_VERSION"
+    echo "実行時刻: $(date)"
+    echo "作業ディレクトリ: $(pwd)"
+    echo "ユーザー: $(whoami)"
+    echo "シェル: $SHELL"
+    echo "設定ファイル: $CONFIG_FILE"
+    echo "エラーログ: $ERROR_LOG"
+    echo
+    
+    # 設定情報の表示
+    echo -e "${PURPLE}=== 設定情報 ===${NC}"
+    echo "X_BEARER_TOKEN: $([ -n "${X_BEARER_TOKEN:-}" ] && echo "設定済み" || echo "未設定")"
+    echo "QIITA_ACCESS_TOKEN: $([ -n "${QIITA_ACCESS_TOKEN:-}" ] && echo "設定済み" || echo "未設定")"
+    echo "NOTION_TOKEN: $([ -n "${NOTION_TOKEN:-}" ] && echo "設定済み" || echo "未設定")"
+    echo "NOTION_DATABASE_ID: $([ -n "${NOTION_DATABASE_ID:-}" ] && echo "設定済み" || echo "未設定")"
+    echo "NOTE_USERNAME: ${NOTE_USERNAME:-未設定}"
+    echo "ZENN_USERNAME: ${ZENN_USERNAME:-未設定}"
+    echo
+    
+    # システム情報の表示
+    echo -e "${PURPLE}=== システム情報 ===${NC}"
+    echo "OS: $(uname -s)"
+    echo "カーネル: $(uname -r)"
+    echo "アーキテクチャ: $(uname -m)"
+    echo "curl バージョン: $(curl --version | head -1)"
+    echo "jq バージョン: $(jq --version)"
+    echo
+}
+
+# 統合テストの実行
+run_integration_tests() {
+    log_info "統合テストを実行中..."
+    
+    local test_passed=0
+    local test_failed=0
+    
+    # テスト1: 設定ファイルの読み込み
+    echo -n "テスト1: 設定ファイルの読み込み... "
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo -e "${GREEN}PASS${NC}"
+        test_passed=$((test_passed + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        test_failed=$((test_failed + 1))
+    fi
+    
+    # テスト2: 依存関係の確認
+    echo -n "テスト2: 依存関係の確認... "
+    if command -v curl &>/dev/null && command -v jq &>/dev/null && command -v base64 &>/dev/null; then
+        echo -e "${GREEN}PASS${NC}"
+        test_passed=$((test_passed + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        test_failed=$((test_failed + 1))
+    fi
+    
+    # テスト3: データ構造の検証
+    echo -n "テスト3: データ構造の検証... "
+    local test_data="platform:Test|title:Test Title|url:https://example.com|engagement_count:100|engagement_type:test|date:2025-01-18"
+    local parsed_platform=$(echo "$test_data" | grep -o 'platform:[^|]*' | cut -d':' -f2)
+    if [[ "$parsed_platform" == "Test" ]]; then
+        echo -e "${GREEN}PASS${NC}"
+        test_passed=$((test_passed + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        test_failed=$((test_failed + 1))
+    fi
+    
+    # テスト4: エラーハンドリング
+    echo -n "テスト4: エラーハンドリング... "
+    if retry_with_backoff "false" 1 1 1 &>/dev/null; then
+        echo -e "${RED}FAIL${NC}"
+        test_failed=$((test_failed + 1))
+    else
+        echo -e "${GREEN}PASS${NC}"
+        test_passed=$((test_passed + 1))
+    fi
+    
+    # テスト5: JSON処理
+    echo -n "テスト5: JSON処理... "
+    local test_json='{"test": "value", "number": 42}'
+    local json_value=$(echo "$test_json" | jq -r '.test')
+    if [[ "$json_value" == "value" ]]; then
+        echo -e "${GREEN}PASS${NC}"
+        test_passed=$((test_passed + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        test_failed=$((test_failed + 1))
+    fi
+    
+    # テスト結果の表示
+    echo
+    echo -e "${WHITE}統合テスト結果:${NC}"
+    echo -e "  成功: ${GREEN}$test_passed${NC} 件"
+    echo -e "  失敗: ${RED}$test_failed${NC} 件"
+    echo -e "  合計: $((test_passed + test_failed)) 件"
+    echo
+    
+    if [[ $test_failed -eq 0 ]]; then
+        log_success "すべての統合テストが成功しました"
+        return 0
+    else
+        log_error "$test_failed 件のテストが失敗しました"
+        return 1
+    fi
+}
+
+# パフォーマンス測定
+measure_performance() {
+    if [[ "$DEBUG_MODE" != "true" ]]; then
+        return 0
+    fi
+    
+    local start_time=$(date +%s)
+    
+    # 実行時間を記録する関数
+    record_execution_time() {
+        local end_time=$(date +%s)
+        local execution_time=$((end_time - start_time))
+        log_debug "実行時間: ${execution_time}秒"
+    }
+    
+    # 終了時に実行時間を記録
+    trap record_execution_time EXIT
+}
+
+# 詳細なエラー時の情報表示
+show_error_details() {
+    if [[ "$DEBUG_MODE" != "true" ]]; then
+        return 0
+    fi
+    
+    echo
+    echo -e "${RED}=== エラー詳細情報 ===${NC}"
+    echo "最後のエラー: $(tail -1 "$ERROR_LOG" 2>/dev/null || echo "なし")"
+    echo "記事データ数: ${#ARTICLE_DATA[@]}"
+    echo "プラットフォーム総計:"
+    for platform in "$PLATFORM_X" "$PLATFORM_NOTE" "$PLATFORM_QIITA" "$PLATFORM_ZENN"; do
+        local total=${PLATFORM_TOTALS[$platform]:-0}
+        echo "  $platform: $total"
+    done
+    echo
+}
+
 # メイン処理
 main() {
     echo -e "${BLUE}$SCRIPT_NAME v$SCRIPT_VERSION${NC}"
     echo "============================================="
     echo
     
+    # シグナルハンドラーの設定
+    setup_signal_handlers
+    
+    # パフォーマンス測定開始
+    measure_performance
+    
     # 引数の処理
     parse_arguments "$@"
     
     # 初期化
     initialize
+    
+    # デバッグ情報の表示
+    show_debug_info
+    
+    # 統合テストの実行（デバッグモードのみ）
+    if [[ "$DEBUG_MODE" == "true" ]]; then
+        run_integration_tests
+    fi
     
     # 設定の読み込み
     load_config
@@ -1029,10 +1679,19 @@ main() {
         log_info "テスト用データを追加しました (${#ARTICLE_DATA[@]} 件)"
     fi
     
+    # 部分的なデータでの継続処理判定
+    if ! handle_partial_data; then
+        show_error_details
+        handle_fatal_error "データ取得に失敗しました"
+    fi
+    
     # データ処理と表示
     if [[ ${#ARTICLE_DATA[@]} -gt 0 ]]; then
         process_all_data
         display_results
+        
+        # Notionに保存
+        save_all_to_notion
     else
         log_warning "取得したデータがありません。設定を確認してください。"
         echo
@@ -1041,9 +1700,12 @@ main() {
         echo "  $0 --reset-config  # 設定をリセット"
     fi
     
-    log_info "処理が完了しました"
+    log_success "全ての処理が完了しました"
     echo
-    echo "次のステップ: Notion連携機能の実装"
+    echo -e "${WHITE}=== 実行完了 ===${NC}"
+    echo "取得記事数: ${#ARTICLE_DATA[@]} 件"
+    echo "設定確認: $0 --config"
+    echo "ヘルプ: $0 --help"
 }
 
 # スクリプトが直接実行された場合のみmain関数を呼び出す
